@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>噪声听写</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#DEDCD3">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png">
+<meta name="description" content="噪声中的听写训练，自适应信噪比阶梯">
+<style>
+:root{
+  --paper:#DEDCD3;
+  --paper-2:#D3D1C6;
+  --ink:#1B1D1A;
+  --faint:#B4B1A5;
+  --right:#C1272D;
+  --left:#2B4C9B;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB",sans-serif;
+  --trace:var(--ink);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}
+body{
+  background:var(--paper);color:var(--ink);
+  font-family:var(--sans);
+  padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  overscroll-behavior:none;
+}
+.wrap{max-width:520px;margin:0 auto;padding:18px 18px 24px;min-height:100%;display:flex;flex-direction:column}
+
+.eyebrow{
+  font-family:var(--mono);font-size:10px;letter-spacing:.22em;
+  text-transform:uppercase;color:#6E6C63;
+}
+
+/* ---- 读数 ---- */
+.readout{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;
+  border-bottom:1.5px solid var(--ink);padding-bottom:8px}
+.snr{font-family:var(--mono);font-size:52px;line-height:.9;font-weight:600;letter-spacing:-.03em;
+  font-variant-numeric:tabular-nums}
+.snr .u{font-size:17px;font-weight:400;letter-spacing:0;margin-left:3px;color:#6E6C63}
+.ticks{display:flex;gap:3px;align-items:center;padding-bottom:6px}
+.tick{width:5px;height:14px;background:var(--faint)}
+.tick.done{background:var(--ink)}
+.tick.miss{background:var(--right)}
+
+/* ---- 轨迹图 ---- */
+.chart{margin:14px 0 4px;background:var(--paper-2);border:1px solid var(--faint);position:relative}
+.chart svg{display:block;width:100%;height:auto}
+.chart .cap{position:absolute;top:6px;left:8px;font-family:var(--mono);font-size:9px;
+  letter-spacing:.16em;color:#6E6C63;text-transform:uppercase}
+
+/* ---- 主区 ---- */
+.stage{flex:1;display:flex;flex-direction:column;justify-content:center;gap:12px;padding:16px 0}
+.verdict{min-height:52px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px}
+.mark{font-family:var(--mono);font-size:26px;line-height:1}
+.mark.ok{color:var(--left)}
+.mark.no{color:var(--right)}
+.truth{font-family:var(--mono);font-size:19px;letter-spacing:.02em}
+.hint{font-size:11px;color:#6E6C63}
+
+button{font-family:inherit;font-size:16px;border:1.5px solid var(--ink);background:transparent;
+  color:var(--ink);padding:15px;width:100%;cursor:pointer;border-radius:0}
+button:active{background:var(--ink);color:var(--paper)}
+button:disabled{opacity:.3}
+button:focus-visible,input:focus-visible{outline:2px solid var(--left);outline-offset:2px}
+.primary{background:var(--ink);color:var(--paper)}
+.primary:active{background:var(--paper);color:var(--ink)}
+.row{display:flex;gap:8px}
+.row button{width:auto;flex:1}
+#choices{display:none;grid-template-columns:1fr 1fr;gap:7px}
+#choices.on{display:grid}
+#choices button{font-family:var(--mono);font-size:14px;padding:16px 6px;
+  letter-spacing:.02em;word-break:break-word;line-height:1.25}
+#choices button.pick{background:var(--ink);color:var(--paper)}
+
+input[type=text]{
+  width:100%;font-family:var(--mono);font-size:19px;padding:14px;
+  border:1.5px solid var(--ink);background:var(--paper-2);color:var(--ink);
+  border-radius:0;-webkit-appearance:none;text-align:center;letter-spacing:.04em;
+}
+input::placeholder{color:#8C897F;letter-spacing:.02em}
+
+/* ---- 面板 ---- */
+.panel{display:none}
+.panel.on{display:block}
+.stat{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--faint);
+  font-family:var(--mono);font-size:13px}
+.stat b{font-weight:600}
+.big{font-family:var(--mono);font-size:44px;font-weight:600;letter-spacing:-.02em;margin:6px 0 2px}
+label{display:block;margin:14px 0 5px;font-family:var(--mono);font-size:10px;
+  letter-spacing:.18em;text-transform:uppercase;color:#6E6C63}
+textarea{width:100%;height:130px;font-family:var(--mono);font-size:13px;padding:10px;
+  border:1.5px solid var(--ink);background:var(--paper-2);color:var(--ink);border-radius:0;
+  -webkit-appearance:none;resize:vertical}
+input[type=range]{width:100%;accent-color:var(--ink)}
+select{width:100%;font-family:var(--mono);font-size:14px;padding:12px;border:1.5px solid var(--ink);
+  background:var(--paper-2);color:var(--ink);border-radius:0;-webkit-appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,var(--ink) 50%),
+    linear-gradient(135deg,var(--ink) 50%,transparent 50%);
+  background-position:calc(100% - 16px) 50%,calc(100% - 11px) 50%;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+.seg{display:flex;border:1.5px solid var(--ink)}
+.seg button{border:0;border-right:1.5px solid var(--ink);font-family:var(--mono);font-size:12px;
+  letter-spacing:.1em;padding:11px 0}
+.seg button:last-child{border-right:0}
+.seg button.on{background:var(--ink);color:var(--paper)}
+.note{font-size:11px;line-height:1.65;color:#5C5A52;margin:12px 0 0}
+.foot{display:flex;justify-content:space-between;align-items:center;margin-top:14px}
+.link{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:#6E6C63;background:none;border:0;width:auto;padding:6px 0;text-decoration:underline}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ 训练 ============ -->
+  <div class="panel on" id="p-drill">
+    <div class="eyebrow" id="lbl-mode">信噪比</div>
+    <div class="readout">
+      <div class="snr"><span id="snr">+12</span><span class="u">dB</span></div>
+      <div class="ticks" id="ticks"></div>
+    </div>
+
+    <div class="chart">
+      <span class="cap">阶梯轨迹</span>
+      <svg id="trace" viewBox="0 0 340 130" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </div>
+
+    <div class="stage">
+      <div class="verdict" id="verdict">
+        <div class="hint" id="hint">戴上耳机，把音量调到平时听播客的水平</div>
+      </div>
+      <button class="primary" id="btn-play">▶ 开始</button>
+      <div id="choices"></div>
+      <input type="text" id="ans" placeholder="听到的词"
+             autocomplete="off" autocorrect="off" autocapitalize="off"
+             spellcheck="false" enterkeyhint="go" disabled>
+      <div class="row">
+        <button id="btn-replay" disabled>重听</button>
+        <button id="btn-submit" disabled>确认</button>
+      </div>
+    </div>
+
+    <div class="foot">
+      <button class="link" id="go-set">设置</button>
+      <button class="link" id="skip">跳过这题</button>
+      <button class="link" id="go-log">记录</button>
+    </div>
+  </div>
+
+  <!-- ============ 结果 ============ -->
+  <div class="panel" id="p-done">
+    <div class="eyebrow">本次阈值</div>
+    <div class="big" id="th">—</div>
+    <div class="eyebrow" id="th-sub">后半段均值</div>
+    <div class="chart" style="margin-top:16px">
+      <span class="cap">阶梯轨迹</span>
+      <svg id="trace2" viewBox="0 0 340 130" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </div>
+    <div id="summary" style="margin-top:14px"></div>
+    <p class="note">错得多是这套算法的工作方式——它会一直把难度顶到你刚好够不着的地方。<br>正确率贴近目标值，说明校准正常。<br>这个数字单看没有意义，看它两周后有没有往下走。练习期间别改手机音量。</p>
+    <button class="primary" id="again" style="margin-top:14px">再来一轮</button>
+    <div class="foot">
+      <button class="link" id="done-log">全部记录</button>
+      <button class="link" id="done-set">设置</button>
+    </div>
+  </div>
+
+  <!-- ============ 记录 ============ -->
+  <div class="panel" id="p-log">
+    <div class="eyebrow">历次阈值</div>
+    <div class="chart" style="margin-top:10px">
+      <span class="cap">趋势</span>
+      <svg id="hist" viewBox="0 0 340 130" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </div>
+    <div id="log-stats" style="margin-top:12px"></div>
+    <label>最常错的词</label>
+    <div id="worst" style="font-family:var(--mono);font-size:13px;line-height:2"></div>
+    <div class="row" style="margin-top:18px">
+      <button id="export">导出 CSV</button>
+      <button id="back1">返回</button>
+    </div>
+  </div>
+
+  <!-- ============ 设置 ============ -->
+  <div class="panel" id="p-set">
+    <div class="eyebrow">设置</div>
+
+    <label>噪声基准 <span id="ref-v" style="float:right;text-transform:none;letter-spacing:0"></span></label>
+    <input type="range" id="ref" min="2" max="40" step="1">
+    <p class="note" style="margin-top:6px">只需调一次。往右拉直到最简单档位（+12dB）刚好还能轻松听清。</p>
+
+    <label>作答方式</label>
+    <div class="seg" id="seg-resp">
+      <button data-r="choice">四选一</button>
+      <button data-r="type">打字</button>
+    </div>
+    <p class="note" style="margin-top:6px">四选一不用打字，走路时也能练，也不会因为拼错而判错。
+      打字更难但更接近真实回忆。</p>
+
+    <label>难度手感</label>
+    <div class="seg" id="seg-down">
+      <button data-d="3">温和</button>
+      <button data-d="2">标准</button>
+    </div>
+    <p class="note" style="margin-top:6px">阶梯会主动把难度推到你「刚好够不着」的位置，所以错是设计的一部分。
+      温和档约 8 成正确，标准档约 7 成。都错得多说明校准正常，不是你退步。</p>
+
+    <label>模式</label>
+    <div class="seg" id="seg-mode">
+      <button data-m="word">孤立词</button>
+      <button data-m="sent">句中词</button>
+      <button data-m="mix">交替</button>
+    </div>
+    <p class="note" style="margin-top:6px">句中词模式播放完整句子，你只需打出缺的那个词。
+      连读、弱读只在句子里存在，孤立词练不到。「交替」两种轮流，可算出语境依赖度。</p>
+
+    <label>每轮题数 <span id="n-v" style="float:right;text-transform:none;letter-spacing:0"></span></label>
+    <input type="range" id="n" min="10" max="40" step="5">
+
+    <label>发音</label>
+    <div class="seg" id="seg-voice"></div>
+
+    <label>语速 <span id="rate-v" style="float:right;text-transform:none;letter-spacing:0"></span></label>
+    <input type="range" id="rate" min="70" max="120" step="5">
+
+    <label>范围 <span id="grp-n" style="float:right;text-transform:none;letter-spacing:0"></span></label>
+    <select id="grp"></select>
+
+    <label>词表</label>
+    <div class="row" style="margin-bottom:8px">
+      <button id="btn-import">从文件导入</button>
+      <button id="btn-append">追加文件</button>
+      <button id="btn-reset">恢复内置</button>
+    </div>
+    <input type="file" id="file" accept=".txt,.md,text/plain" style="display:none">
+    <textarea id="words" autocomplete="off" autocorrect="off"
+              autocapitalize="off" spellcheck="false"></textarea>
+    <p class="note">两种格式都认：<br>· 一行一个词<br>· word | 释义 | Sentence with ___. | answer<br>词盒的 bank.txt 整段贴进来即可。</p>
+
+    <div class="row" style="margin-top:18px">
+      <button id="save">保存</button>
+      <button id="back2">返回</button>
+    </div>
+    <p class="note" id="warn"></p>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+
+/* ---------------- 存储：localStorage 不可用时退回内存 ---------------- */
+const mem = {};
+const DB = {
+  get(k, d) {
+    try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }
+    catch (e) { return k in mem ? mem[k] : d; }
+  },
+  set(k, v) {
+    try { localStorage.setItem(k, JSON.stringify(v)); }
+    catch (e) { mem[k] = v; }
+  }
+};
+
+const DEFAULT_WORDS = `# 词汇真经 · 地理
+magma | n. 岩浆 | Some types of minerals are made when ___ cools and solidifies. | magma
+erupt | v. 爆发，喷发；（斑疹等）突然出现 | Hot lava ___ from the crust. | erupts
+volcano | n. 火山 | The ___ erupted and two small towns were buried under metres of hot ash. | volcano
+crust | n. 地壳；外壳 | The ___ on the snow was thick enough for us to walk on it. | crust
+mantle | n./v. 地幔；斗篷，披风；覆盖 | Beneath the crust lies the ___, a layer of hot rock nearly 3,000 kilometres thick. | mantle
+core | n. 中心，核心；地核 | The earth's inner ___ is thought to be made largely of solid iron. | core
+atmosphere | n. 大气层，大气圈；气氛 | Almost all weather occurs in the lowest layer of the earth's ___. | atmosphere
+hydrosphere | n. 水圈；大气中的水汽 | All the water of the earth's surface is included in the ___. | hydrosphere
+lithosphere | n. 岩石圈 | The hydrosphere and the ___ together form the earth's surface. | lithosphere
+oxygen | n. 氧气 | Hydrogen and ___ are gases. | oxygen
+oxide | n. 氧化物 | Rust forms when iron reacts with oxygen to produce iron ___. | oxide
+carbon dioxide | n. 二氧化碳 | Soft drinks usually contain ___. | carbon dioxide
+hydrogen | n. 氢气 | Two parts ___, one part oxygen, you'll get water every time. | hydrogen
+longitude | n. 经度 | The captain determines the latitude and ___ of his ship. | longitude
+latitude | n. 纬度 | Our position is 40 degrees north ___. | latitude
+horizon | n. 地平线；[~s]眼界，见识 | I could see a ship on the ___. | horizon`;
+
+const BANK_VER = 3;
+if (DB.get('bankVer', 0) < BANK_VER) {   // 内置词表更新过, 覆盖旧存储
+  DB.set('words', DEFAULT_WORDS);
+  DB.set('group', '');
+  DB.set('bankVer', BANK_VER);
+}
+
+const cfg = {
+  ref:   DB.get('ref', 12) / 100,
+  n:     DB.get('n', 20),
+  rate:  DB.get('rate', 90) / 100,
+  voice: DB.get('voice', ''),
+  mode:  DB.get('mode', 'word'),   // word | sent | mix
+  resp:  DB.get('resp', 'choice'), // choice 四选一 | type 打字
+  down:  DB.get('down', 3),        // 连对几次才加难: 2→71%正确率, 3→79%
+  group: DB.get('group', ''),      // '' = 全部分组
+  fam:   DB.get('fam', 1),
+  words: DB.get('words', DEFAULT_WORDS)
+};
+
+
+/* ---- 例句自动修正（原 convert.py 的逻辑，改在浏览器里跑） ---- */
+const IRREG = { be: 'is', have: 'has', do: 'does', go: 'goes' };
+function thirdPerson(v) {
+  if (IRREG[v]) return IRREG[v];
+  if (/(s|sh|ch|x|z|o)$/.test(v)) return v + 'es';
+  if (/[^aeiou]y$/.test(v)) return v.slice(0, -1) + 'ies';
+  return v + 's';
+}
+function pluralize(n) {
+  if (/(s|sh|ch|x|z)$/.test(n)) return n + 'es';
+  if (/[^aeiou]y$/.test(n)) return n.slice(0, -1) + 'ies';
+  if (/fe$/.test(n)) return n.slice(0, -2) + 'ves';
+  return n + 's';
+}
+/* 从「词头 + 释义 + 带空句子」推断空格里该填的实际形式。
+   例: erupt + "Hot lava ___ from the crust." → erupts
+   直接用词头会造出语法错误的句子，听多了污染语感。 */
+function inferAnswer(word, zh, sent) {
+  const m = sent.match(/_{2,}/);
+  if (!m) return { a: word, note: '' };
+  const before = sent.slice(0, m.index);
+  const after = sent.slice(m.index + m[0].length);
+  const pm = zh.match(/^\s*([a-z]+)\./);
+  const pos = pm ? pm[1] : '';
+  let a = word, note = '';
+
+  if (pos === 'v') {
+    const tail = before.trim().split(/\s+/);
+    const plural = tail.some(w => /^(they|we|you|these|those)$/i.test(w));
+    const predicate = /^\s+(from|to|in|on|at|into|with|when|and|the|a|an)\b/i.test(after);
+    if (!plural && predicate) { a = thirdPerson(word); note = '动词变形'; }
+  }
+  if (pos === 'n') {
+    const coord = /\b(and|or)\s*$/i.test(before);
+    if (/^\s+(are|were|have)\b/i.test(after) && !coord) {
+      a = pluralize(word); note = '复数';
+    }
+  }
+  return { a, note };
+}
+/* 冠词修正：a apple → an apple */
+function fixArticle(sent, ans) {
+  const m = sent.match(/_{2,}/);
+  if (!m) return sent;
+  const need = /^[aeiou]/i.test(ans) ? 'an' : 'a';
+  return sent.replace(/\b(a|an)(\s*)_{2,}/i, (full, art, sp) =>
+    (art[0] === art[0].toUpperCase() ? need[0].toUpperCase() + need.slice(1) : need) + sp + m[0]);
+}
+
+/* 解析词表：支持两种行格式
+     apple                                  → 孤立词
+     word | 释义 | Sentence with ___. | ans  → 句中词（第4段可省, 默认用词头）  */
+function parseBank(text) {
+  const out = [];
+  let g = '';
+  text.split('\n').forEach(ln => {
+    ln = ln.trim();
+    if (!ln) return;
+    if (ln[0] === '#') { g = ln.replace(/^#+\s*/, '').trim(); return; }
+    if (ln.includes('|')) {
+      const p = ln.split('|').map(s => s.trim());
+      if (p.length >= 3) {
+        if (/_{2,}/.test(p[2])) {
+          let a = p[3], note = '';
+          if (!a) { const r = inferAnswer(p[0], p[1] || '', p[2]); a = r.a; note = r.note; }
+          const blank = fixArticle(p[2], a);
+          const m = blank.match(/_{2,}/);
+          out.push({
+            w: p[0], zh: p[1], a, g, note, blank,
+            s: blank.slice(0, m.index) + a + blank.slice(m.index + m[0].length)
+          });
+          return;
+        }
+      }
+      if (p[0]) out.push({ w: p[0], a: p[0], zh: p[1] || '', g });
+      return;
+    }
+    out.push({ w: ln, a: ln, g });
+  });
+  return out;
+}
+
+const START = 12, STEP = 2, LO = -6, HI = 24;
+
+/* ---------------- 音频：语音成形噪声 ---------------- */
+let ctx = null, noiseSrc = null, noiseGain = null;
+
+function initAudio() {
+  if (ctx) return;
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+  const len = ctx.sampleRate * 4;
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+
+  noiseSrc = ctx.createBufferSource();
+  noiseSrc.buffer = buf;
+  noiseSrc.loop = true;
+
+  // 成形成长时平均语音谱：100Hz 以下切掉，500Hz 附近抬一点，1kHz 以上滚降
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass'; hp.frequency.value = 100;
+  const pk = ctx.createBiquadFilter();
+  pk.type = 'peaking'; pk.frequency.value = 500; pk.Q.value = 0.7; pk.gain.value = 4;
+  const sh = ctx.createBiquadFilter();
+  sh.type = 'highshelf'; sh.frequency.value = 1000; sh.gain.value = -9;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass'; lp.frequency.value = 6000; lp.Q.value = 0.5;
+
+  // 两级增益：modGain 做起伏（围绕 1.0 波动），noiseGain 做电平。
+  // 必须分开——调制若直接加在电平节点上，高 SNR 时调制量会远大于电平本身。
+  const modGain = ctx.createGain();
+  modGain.gain.value = 1;
+
+  noiseGain = ctx.createGain();
+  noiseGain.gain.value = 0;
+
+  noiseSrc.connect(hp).connect(pk).connect(sh).connect(lp)
+          .connect(modGain).connect(noiseGain).connect(ctx.destination);
+  noiseSrc.start();
+
+  // 轻微起伏，接近多人说话的包络（纯稳态噪声太"死"）
+  [3.1, 4.3, 5.7].forEach(f => {
+    const lfo = ctx.createOscillator(); lfo.frequency.value = f;
+    const amt = ctx.createGain(); amt.gain.value = 0.12;
+    lfo.connect(amt).connect(modGain.gain);
+    lfo.start();
+  });
+}
+
+const gainFor = snr => cfg.ref * Math.pow(10, -snr / 20);
+
+function noiseUp(snr) {
+  const t = ctx.currentTime;
+  noiseGain.gain.cancelScheduledValues(t);
+  noiseGain.gain.setValueAtTime(noiseGain.gain.value, t);
+  noiseGain.gain.linearRampToValueAtTime(gainFor(snr), t + 0.15);
+}
+function noiseDown() {
+  const t = ctx.currentTime;
+  noiseGain.gain.cancelScheduledValues(t);
+  noiseGain.gain.setValueAtTime(noiseGain.gain.value, t);
+  noiseGain.gain.linearRampToValueAtTime(0, t + 0.25);
+}
+
+/* ---------------- 语音 ---------------- */
+let voices = [];
+function loadVoices() {
+  voices = speechSynthesis.getVoices().filter(v => /^en(-|_)/i.test(v.lang));
+  renderVoices();
+}
+speechSynthesis.onvoiceschanged = loadVoices;
+
+function pickVoice() {
+  if (!voices.length) return null;
+  return voices.find(v => v.name === cfg.voice)
+      || voices.find(v => /GB|UK/i.test(v.lang))
+      || voices[0];
+}
+
+function say(word, snr) {
+  return new Promise(res => {
+    initAudio();
+    if (ctx.state === 'suspended') ctx.resume();
+
+    let done = false, started = false, tries = 0, wd = null, sw = null;
+
+    const settle = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(wd); clearTimeout(sw);
+      try { speechSynthesis.cancel(); } catch (e) {}
+      noiseDown();
+      res();
+    };
+
+    const speak = () => {
+      if (done) return;
+      tries++;
+      const u = new SpeechSynthesisUtterance(word);
+      const v = pickVoice();
+      if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = 'en-GB'; }
+      u.rate = cfg.rate;
+      u.volume = 1;
+
+      u.onstart = () => {
+        started = true;
+        clearTimeout(sw);
+        // 起播了才按长度定上限
+        wd = setTimeout(settle, 3000 + word.length * 150);
+      };
+      u.onend = () => setTimeout(settle, 350);
+      u.onerror = () => { if (!started) retry(); else settle(); };
+
+      try { speechSynthesis.speak(u); } catch (e) { retry(); return; }
+
+      // 没起播 = cancel() 把它一起吞了，重试而不是干等
+      sw = setTimeout(() => { if (!started) retry(); }, 1400);
+    };
+
+    const retry = () => {
+      if (done || started) return;
+      if (tries >= 3) { settle(); return; }
+      try { speechSynthesis.cancel(); } catch (e) {}
+      setTimeout(speak, 300);
+    };
+
+    try { speechSynthesis.cancel(); } catch (e) {}
+    noiseUp(snr);
+    setTimeout(speak, 380);
+  });
+}
+
+// Chrome/Safari 连续合成一段时间后会静默停摆，定时 resume 可以保活
+setInterval(() => {
+  try {
+    if (speechSynthesis.paused) speechSynthesis.resume();
+  } catch (e) {}
+}, 5000);
+
+/* ---------------- 阶梯 ---------------- */
+let words = [], queue = [], i = 0, snr = START, streak = 0,
+    hist = [], results = [], modes = [], retired = [], busy = false, answered = false;
+
+// 拼写差一个字母 → 算听对。这里测的是耳朵, 不是拼写
+function editDist(a, b) {
+  const m = a.length, n = b.length;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++)
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1,
+                        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+
+const $ = id => document.getElementById(id);
+const show = id => document.querySelectorAll('.panel')
+  .forEach(p => p.classList.toggle('on', p.id === id));
+
+function shuffle(a) {
+  a = a.slice();
+  for (let k = a.length - 1; k > 0; k--) {
+    const j = Math.floor(Math.random() * (k + 1));
+    [a[k], a[j]] = [a[j], a[k]];
+  }
+  return a;
+}
+
+let curMode = 'word';
+
+function start() {
+  let all = parseBank(cfg.words);
+  if (cfg.group) all = all.filter(e => e.g === cfg.group);
+  const withSent = all.filter(e => e.s);
+  if (cfg.mode === 'sent' && !withSent.length) {
+    alert('词表里没有带例句的条目，先在设置里贴入例句格式');
+    return;
+  }
+  words = (cfg.mode === 'sent') ? withSent : all;
+  if (words.length < 4) { alert('词表至少要 4 条'); return; }
+  queue = shuffle(words);
+  i = 0; snr = START; streak = 0; hist = []; results = []; modes = []; retired = [];
+  drawTrace('trace', hist, results);
+  drawTicks();
+  show('p-drill');
+  next();
+}
+
+const cur = () => queue[i % queue.length];
+
+/* 干扰项：优先挑长度相近、首字母相同的词，比随机更接近真实混淆 */
+function distractors(truth, k) {
+  const pool = words.map(e => e.a).filter(a => typeof a === 'string' && a && a !== truth);
+  const score = a => (a[0] === truth[0] ? 0 : 2) + Math.abs(a.length - truth.length) * 0.4;
+  return shuffle(pool).sort((x, y) => score(x) - score(y)).slice(0, k);
+}
+
+function renderChoices(truth) {
+  if (typeof truth !== 'string' || !truth) throw new Error('题目数据缺失');
+  const opts = shuffle([truth, ...distractors(truth, 3)]);
+  $('choices').innerHTML = opts.map(o =>
+    '<button data-o="' + esc(o) + '">' + esc(o) + '</button>').join('');
+  $('choices').querySelectorAll('button').forEach(b => {
+    b.onclick = () => {
+      if (answered) return;
+      b.classList.add('pick');
+      $('ans').value = b.dataset.o;
+      submit();
+    };
+  });
+}
+
+function trialMode() {
+  const e = cur();
+  if (cfg.mode === 'mix') return (e.s && i % 2 === 1) ? 'sent' : 'word';
+  return (cfg.mode === 'sent' && e.s) ? 'sent' : 'word';
+}
+
+async function next() {
+  if (i >= cfg.n) return finish();
+  curMode = trialMode();
+  $('lbl-mode').textContent = curMode === 'sent' ? '信噪比 · 句中词' : '信噪比 · 孤立词';
+  $('snr').textContent = (snr >= 0 ? '+' : '') + snr;
+  $('verdict').innerHTML = '<div class="hint">播放中…</div>';
+  $('ans').value = '';
+  $('choices').classList.remove('on');
+  answered = false;
+  drawTicks();
+  await play();
+  const choice = cfg.resp === 'choice';
+  $('verdict').innerHTML = '<div class="hint">' +
+    (choice ? '选出你听到的词'
+            : curMode === 'sent' ? '打出句中缺的那个词' : '打出你听到的词') + '</div>';
+  $('choices').classList.toggle('on', choice);
+  $('ans').style.display = choice ? 'none' : '';
+  $('btn-submit').style.display = choice ? 'none' : '';
+  $('btn-replay').disabled = false;
+  if (choice) {
+    let okRender = false;
+    try { renderChoices(cur().a); okRender = $('choices').innerHTML.length > 0; }
+    catch (e) { okRender = false; }
+    if (!okRender) {                       // 选项渲染失败就退回打字, 绝不留死界面
+      $('choices').classList.remove('on');
+      $('ans').style.display = '';
+      $('btn-submit').style.display = '';
+      $('ans').disabled = false;
+      $('btn-submit').disabled = false;
+    }
+  }
+  else {
+    $('ans').disabled = false;
+    $('btn-submit').disabled = false;
+    $('ans').focus();
+  }
+}
+
+let replays = 0;
+async function play() {
+  if (busy) return;
+  busy = true;
+  $('btn-play').textContent = '播放中';
+  $('btn-play').disabled = true;
+  $('btn-replay').disabled = true;
+  try {
+    const e = cur();
+    await say(curMode === 'sent' ? e.s : e.w, snr);
+  } catch (err) {
+    $('verdict').innerHTML = '<div class="hint">这条没能播出来：' +
+      esc(String(err && err.message || err)) + '<br>点「重听」再试，或「跳过这题」</div>';
+  } finally {
+    $('btn-play').textContent = '▶ 播放';
+    $('btn-play').disabled = false;
+    $('btn-replay').disabled = false;
+    busy = false;
+  }
+}
+
+function submit() {
+  // 只用 answered 防重复提交。busy 表示音频在播，与能不能作答无关——
+  // 混用这两件事会让「重听时点选项」的操作被静默丢弃并锁死界面。
+  if (answered) return;
+  if (cfg.resp !== 'choice' && $('ans').disabled) return;
+  const typed = $('ans').value.trim();
+  if (!typed) return;
+  answered = true;
+  try { speechSynthesis.cancel(); } catch (err) {}
+  const e = cur();
+  const truth = e.a;
+  const norm = s => s.toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
+  const nt = norm(typed), nr = norm(truth);
+  const exact = nt === nr;
+  // 长词允许差一个字母：听对了但拼错，不该算听力错误
+  const spellOnly = !exact && nr.length >= 6 && editDist(nt, nr) <= 1;
+  const ok = exact || spellOnly;
+
+  results.push(ok);
+  hist.push(snr);
+  modes.push(curMode);
+  DB.set('attempts', (DB.get('attempts', [])).concat([{
+    t: Date.now(), w: truth, snr, r: replays, typed, ok: ok ? 1 : 0, m: curMode
+  }]).slice(-3000));
+
+  // 句子只在答完后揭示——提前给出文字等于泄漏语境
+  const reveal = (curMode === 'sent' && e.blank)
+    ? '<div class="hint" style="margin-top:5px;line-height:1.5">' +
+      esc(e.blank.replace(/_{2,}/, '【' + truth + '】')) + '</div>' : '';
+  $('verdict').innerHTML = (exact
+    ? '<div class="mark ok">✓</div>'
+    : spellOnly
+      ? '<div class="mark ok">✓</div><div class="truth">' + esc(truth) +
+        '</div><div class="hint">听对了，拼写差一个字母</div>'
+      : '<div class="mark no">·</div><div class="truth">' + esc(truth) + '</div>') + reveal;
+
+  // 1-up-2-down：错一次变简单，连对两次变难 → 收敛到约 71% 正确率
+  if (ok) { streak++; if (streak >= cfg.down) { snr -= STEP; streak = 0; } }
+  else {
+    // 已经在最高信噪比还是错 → 不是听不清, 是不认识这个词。
+    // 继续问下去只会一直错, 把它撤出本轮并记下来。
+    if (snr >= HI) { retired.push(truth); queue = queue.filter(x => x.a !== truth); }
+    snr += STEP; streak = 0;
+  }
+  snr = Math.max(LO, Math.min(HI, snr));
+  if (!queue.length) queue = shuffle(words);
+
+  drawTrace('trace', hist, results);
+  $('ans').disabled = true;
+  $('btn-replay').disabled = true;
+  $('btn-submit').disabled = true;
+  i++; replays = 0;
+  setTimeout(next, curMode === 'sent' ? 1400 : 650);
+}
+
+function finish() {
+  noiseDown();
+  const tail = hist.slice(Math.floor(hist.length / 2));
+  const th = tail.reduce((a, b) => a + b, 0) / tail.length;
+  const acc = Math.round(results.filter(Boolean).length / results.length * 100);
+
+  const byMode = m => {
+    const v = hist.filter((_, k) => modes[k] === m);
+    const t2 = v.slice(Math.floor(v.length / 2));
+    return t2.length ? +(t2.reduce((a, b) => a + b, 0) / t2.length).toFixed(1) : null;
+  };
+  const S = DB.get('sessions', []);
+  S.push({ t: Date.now(), th: +th.toFixed(1), n: hist.length, acc,
+           mode: cfg.mode, thW: byMode('word'), thS: byMode('sent') });
+  DB.set('sessions', S);
+
+  $('th').textContent = (th >= 0 ? '+' : '') + th.toFixed(1) + ' dB';
+  let sub = '后半段均值 · 共 ' + hist.length + ' 题';
+  if (S.length > 1) {
+    const d = th - S[S.length - 2].th;
+    sub += ' · 较上次 ' + (d <= 0 ? '↓' : '↑') + Math.abs(d).toFixed(1) + ' dB';
+  }
+  $('th-sub').textContent = sub;
+  const target = cfg.down === 3 ? 79 : 71;
+  $('summary').innerHTML =
+    stat('正确率', acc + '%  (目标 ' + target + '%)') +
+    stat('最低达到', Math.min(...hist) + ' dB') +
+    stat('累计练习', S.length + ' 轮');
+  if (retired.length) {
+    $('summary').innerHTML +=
+      '<p class="note">这几个词最高信噪比下仍答错，属于不认识而非听不清，已撤出本轮：<br><b>' +
+      retired.map(esc).join('、') + '</b><br>先去背，别在这儿耗。</p>';
+  }
+  const r = S[S.length - 1];
+  if (r.thW !== null && r.thS !== null) {
+    $('summary').innerHTML += stat('语境依赖度',
+      (r.thW - r.thS).toFixed(1) + ' dB');
+  }
+  drawTrace('trace2', hist, results);
+  show('p-done');
+}
+
+const stat = (k, v) => '<div class="stat"><span>' + k + '</span><b>' + v + '</b></div>';
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ---------------- 绘图 ---------------- */
+function drawTicks() {
+  $('ticks').innerHTML = Array.from({ length: cfg.n }, (_, k) => {
+    const cls = k < results.length ? (results[k] ? 'tick done' : 'tick miss') : 'tick';
+    return '<i class="' + cls + '"></i>';
+  }).join('');
+}
+
+function drawTrace(id, h, res) {
+  const W = 340, H = 130, PL = 26, PR = 8, PT = 14, PB = 12;
+  const x = k => PL + (W - PL - PR) * (cfg.n <= 1 ? 0 : k / (cfg.n - 1));
+  const y = v => PT + (H - PT - PB) * (1 - (v - LO) / (HI - LO));
+  let s = '';
+
+  for (let v = LO; v <= HI; v += 6) {
+    s += '<line x1="' + PL + '" y1="' + y(v).toFixed(1) + '" x2="' + (W - PR) +
+         '" y2="' + y(v).toFixed(1) + '" stroke="var(--faint)" stroke-width="0.5"/>';
+    s += '<text x="2" y="' + (y(v) + 3).toFixed(1) + '" font-size="8" fill="#6E6C63" ' +
+         'font-family="ui-monospace,monospace">' + (v > 0 ? '+' + v : v) + '</text>';
+  }
+
+  if (h.length) {
+    const pts = h.map((v, k) => x(k).toFixed(1) + ',' + y(v).toFixed(1)).join(' ');
+    s += '<polyline points="' + pts + '" fill="none" stroke="var(--trace)" ' +
+         'stroke-width="1.6" stroke-linejoin="round"/>';
+    h.forEach((v, k) => {
+      const ok = res[k];
+      s += ok
+        ? '<circle cx="' + x(k).toFixed(1) + '" cy="' + y(v).toFixed(1) +
+          '" r="2.6" fill="var(--paper-2)" stroke="var(--left)" stroke-width="1.4"/>'
+        : '<g stroke="var(--right)" stroke-width="1.6"><line x1="' + (x(k) - 2.6).toFixed(1) +
+          '" y1="' + (y(v) - 2.6).toFixed(1) + '" x2="' + (x(k) + 2.6).toFixed(1) +
+          '" y2="' + (y(v) + 2.6).toFixed(1) + '"/><line x1="' + (x(k) - 2.6).toFixed(1) +
+          '" y1="' + (y(v) + 2.6).toFixed(1) + '" x2="' + (x(k) + 2.6).toFixed(1) +
+          '" y2="' + (y(v) - 2.6).toFixed(1) + '"/></g>';
+    });
+    if (h.length >= 4) {
+      const tail = h.slice(Math.floor(h.length / 2));
+      const th = tail.reduce((a, b) => a + b, 0) / tail.length;
+      s += '<line x1="' + PL + '" y1="' + y(th).toFixed(1) + '" x2="' + (W - PR) +
+           '" y2="' + y(th).toFixed(1) +
+           '" stroke="var(--ink)" stroke-width="0.9" stroke-dasharray="4 3" opacity=".65"/>';
+    }
+  }
+  $(id).innerHTML = s;
+}
+
+function drawHist() {
+  const S = DB.get('sessions', []);
+  const W = 340, H = 130, PL = 26, PR = 8, PT = 14, PB = 12;
+  if (!S.length) { $('hist').innerHTML =
+    '<text x="' + (W/2) + '" y="' + (H/2) + '" font-size="10" fill="#6E6C63" ' +
+    'text-anchor="middle" font-family="ui-monospace,monospace">还没有记录</text>'; return; }
+  const x = k => PL + (W - PL - PR) * (S.length <= 1 ? 0.5 : k / (S.length - 1));
+  const y = v => PT + (H - PT - PB) * (1 - (v - LO) / (HI - LO));
+  let s = '';
+  for (let v = LO; v <= HI; v += 6) {
+    s += '<line x1="' + PL + '" y1="' + y(v).toFixed(1) + '" x2="' + (W - PR) +
+         '" y2="' + y(v).toFixed(1) + '" stroke="var(--faint)" stroke-width="0.5"/>' +
+         '<text x="2" y="' + (y(v) + 3).toFixed(1) + '" font-size="8" fill="#6E6C63" ' +
+         'font-family="ui-monospace,monospace">' + (v > 0 ? '+' + v : v) + '</text>';
+  }
+  s += '<polyline points="' + S.map((r, k) => x(k).toFixed(1) + ',' + y(r.th).toFixed(1)).join(' ') +
+       '" fill="none" stroke="var(--trace)" stroke-width="1.6"/>';
+  S.forEach((r, k) => {
+    s += '<circle cx="' + x(k).toFixed(1) + '" cy="' + y(r.th).toFixed(1) +
+         '" r="3" fill="var(--ink)"/>';
+  });
+  $('hist').innerHTML = s;
+
+  const A = DB.get('attempts', []);
+  const first = S[0].th, last = S[S.length - 1].th;
+  $('log-stats').innerHTML =
+    stat('练习轮数', S.length) +
+    stat('首次阈值', (first >= 0 ? '+' : '') + first.toFixed(1) + ' dB') +
+    stat('最近阈值', (last >= 0 ? '+' : '') + last.toFixed(1) + ' dB') +
+    stat('累计变化', (last - first <= 0 ? '↓ ' : '↑ ') + Math.abs(last - first).toFixed(1) + ' dB');
+  const pair = S.filter(r => r.thW !== null && r.thS !== null && r.thW !== undefined);
+  if (pair.length) {
+    const g = pair[pair.length - 1];
+    $('log-stats').innerHTML += stat('孤立词阈值', (g.thW >= 0 ? '+' : '') + g.thW + ' dB')
+      + stat('句中词阈值', (g.thS >= 0 ? '+' : '') + g.thS + ' dB')
+      + stat('语境依赖度', (g.thW - g.thS).toFixed(1) + ' dB');
+  }
+
+  const bad = {};
+  A.forEach(a => { if (!a.ok) bad[a.w] = (bad[a.w] || 0) + 1; });
+  const top = Object.entries(bad).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  $('worst').innerHTML = top.length
+    ? top.map(([w, c]) => esc(w) + '<span style="float:right;color:#6E6C63">' + c + '</span>').join('<br>')
+    : '<span style="color:#6E6C63;font-size:12px">还没有错题</span>';
+}
+
+/* ---------------- 设置 ---------------- */
+function renderVoices() {
+  const pool = voices.slice(0, 4);
+  $('seg-voice').innerHTML = pool.length
+    ? pool.map(v => '<button data-v="' + esc(v.name) + '"' +
+        (v.name === cfg.voice ? ' class="on"' : '') + '>' +
+        esc(v.lang.replace('_', '-')) + '</button>').join('')
+    : '<button class="on">系统默认</button>';
+  $('seg-voice').querySelectorAll('button[data-v]').forEach(b => {
+    b.onclick = () => {
+      cfg.voice = b.dataset.v;
+      $('seg-voice').querySelectorAll('button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      initAudio(); if (ctx.state === 'suspended') ctx.resume();
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance('library');
+      const v = voices.find(x => x.name === cfg.voice);
+      if (v) { u.voice = v; u.lang = v.lang; }
+      u.rate = cfg.rate; speechSynthesis.speak(u);
+    };
+  });
+}
+
+function renderSeg(id, key, attr) {
+  $(id).querySelectorAll('button').forEach(b => {
+    b.classList.toggle('on', String(cfg[key]) === b.dataset[attr]);
+    b.onclick = () => {
+      cfg[key] = (key === 'down') ? +b.dataset[attr] : b.dataset[attr];
+      renderSeg(id, key, attr);
+    };
+  });
+}
+
+function renderMode() {
+  $('seg-mode').querySelectorAll('button').forEach(b => {
+    b.classList.toggle('on', b.dataset.m === cfg.mode);
+    b.onclick = () => { cfg.mode = b.dataset.m; renderMode(); };
+  });
+}
+
+function renderGroups() {
+  const all = parseBank($('words').value || cfg.words);
+  const gs = [...new Set(all.map(e => e.g).filter(Boolean))];
+  $('grp').innerHTML = '<option value="">全部（' + all.length + ' 条）</option>' +
+    gs.map(g => {
+      const n = all.filter(e => e.g === g).length;
+      return '<option value="' + esc(g) + '"' + (g === cfg.group ? ' selected' : '') +
+             '>' + esc(g) + '（' + n + ' 条）</option>';
+    }).join('');
+  const sel = cfg.group ? all.filter(e => e.g === cfg.group) : all;
+  const withS = sel.filter(e => e.s).length;
+  $('grp-n').textContent = sel.length + ' 条 · 带例句 ' + withS;
+}
+
+function openSet() {
+  renderMode();
+  renderSeg('seg-resp', 'resp', 'r');
+  renderSeg('seg-down', 'down', 'd');
+  $('ref').value = Math.round(cfg.ref * 100);
+  $('ref-v').textContent = Math.round(cfg.ref * 100);
+  $('n').value = cfg.n; $('n-v').textContent = cfg.n;
+  $('rate').value = Math.round(cfg.rate * 100);
+  $('rate-v').textContent = cfg.rate.toFixed(2) + '×';
+  $('words').value = cfg.words;
+  renderGroups();
+  renderVoices();
+  let w = '';
+  try { localStorage.setItem('_t', '1'); localStorage.removeItem('_t'); }
+  catch (e) { w = '当前环境无法保存记录，关掉页面数据会丢失。把文件存到手机上用浏览器打开即可正常保存。'; }
+  $('warn').textContent = w;
+  show('p-set');
+}
+
+/* ---------------- 事件 ---------------- */
+let unlocked = false;
+function unlockSpeech() {
+  // iOS/Safari 要求第一次 speak() 直接发生在用户手势里，
+  // 否则后续所有 setTimeout 里的 speak() 都会被静默丢弃。
+  if (unlocked) return;
+  unlocked = true;
+  try {
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+  try { initAudio(); if (ctx.state === 'suspended') ctx.resume(); } catch (e) {}
+}
+
+$('btn-play').onclick = () => {
+  unlockSpeech();
+  if ($('btn-play').textContent === '▶ 开始') { start(); }
+  else { replays++; play(); }
+};
+$('btn-replay').onclick = () => { replays++; play(); };
+$('btn-submit').onclick = submit;
+$('ans').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+
+$('skip').onclick = () => {
+  // 逃生口：卡住或遇到完全不认识的词时用，不计入成绩
+  try { speechSynthesis.cancel(); } catch (e) {}
+  if (ctx) noiseDown();
+  busy = false;
+  answered = true;
+  $('btn-play').textContent = '▶ 播放';
+  $('btn-play').disabled = false;
+  $('ans').disabled = true;
+  $('btn-submit').disabled = true;
+  $('choices').classList.remove('on');
+  i++; replays = 0;
+  next();
+};
+
+$('again').onclick = start;
+$('go-set').onclick = openSet;
+$('done-set').onclick = openSet;
+$('go-log').onclick = () => { drawHist(); show('p-log'); };
+$('done-log').onclick = () => { drawHist(); show('p-log'); };
+$('back1').onclick = () => show('p-drill');
+$('back2').onclick = () => show('p-drill');
+
+$('ref').oninput = e => { cfg.ref = +e.target.value / 100; $('ref-v').textContent = e.target.value; };
+$('n').oninput   = e => { cfg.n = +e.target.value; $('n-v').textContent = e.target.value; };
+$('rate').oninput= e => { cfg.rate = +e.target.value / 100; $('rate-v').textContent = cfg.rate.toFixed(2) + '×'; };
+
+$('grp').onchange = e => { cfg.group = e.target.value; renderGroups(); };
+$('words').oninput = () => { renderGroups(); };
+
+let appendMode = false;
+$('btn-import').onclick = () => { appendMode = false; $('file').click(); };
+$('btn-append').onclick = () => { appendMode = true;  $('file').click(); };
+$('file').onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    const txt = String(r.result).trim();
+    $('words').value = appendMode ? ($('words').value.trim() + '\n' + txt) : txt;
+    cfg.group = '';
+    renderGroups();
+    const n = parseBank($('words').value).length;
+    alert('已载入 ' + n + ' 条，记得点保存');
+  };
+  r.readAsText(f, 'utf-8');
+  e.target.value = '';
+};
+
+$('btn-reset').onclick = () => {
+  $('words').value = DEFAULT_WORDS;
+  cfg.group = '';
+  renderGroups();
+};
+
+$('save').onclick = () => {
+  cfg.words = $('words').value;
+  DB.set('ref', Math.round(cfg.ref * 100));
+  DB.set('n', cfg.n);
+  DB.set('rate', Math.round(cfg.rate * 100));
+  DB.set('voice', cfg.voice);
+  DB.set('mode', cfg.mode);
+  DB.set('resp', cfg.resp);
+  DB.set('down', cfg.down);
+  DB.set('group', cfg.group);
+  DB.set('words', cfg.words);
+  $('btn-play').textContent = '▶ 开始';
+  show('p-drill');
+  drawTrace('trace', [], []);
+  drawTicks();
+};
+
+$('export').onclick = () => {
+  const A = DB.get('attempts', []);
+  if (!A.length) { alert('还没有记录'); return; }
+  const rows = [['time', 'word', 'snr', 'replays', 'typed', 'correct']]
+    .concat(A.map(a => [new Date(a.t).toISOString(), a.w, a.snr, a.r, a.typed, a.ok]));
+  const csv = rows.map(r => r.join(',')).join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = 'listen-log.csv'; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+/* ---------------- PWA ---------------- */
+// file:// 下浏览器禁止注册 Service Worker，此时静默跳过，功能不受影响
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').then(reg => {
+      reg.addEventListener('updatefound', () => {
+        const w = reg.installing;
+        if (!w) return;
+        w.addEventListener('statechange', () => {
+          if (w.state === 'installed' && navigator.serviceWorker.controller) {
+            const bar = document.createElement('button');
+            bar.className = 'primary';
+            bar.style.cssText = 'position:fixed;left:14px;right:14px;bottom:14px;width:auto;z-index:9';
+            bar.textContent = '有新版本，点此更新';
+            bar.onclick = () => { w.postMessage('skipWaiting'); location.reload(); };
+            document.body.appendChild(bar);
+          }
+        });
+      });
+    }).catch(() => {});
+  });
+}
+
+// 装到主屏后横屏会让阈值读数被键盘挤掉，锁竖屏（支持的浏览器才生效）
+if (screen.orientation && screen.orientation.lock) {
+  screen.orientation.lock('portrait').catch(() => {});
+}
+
+loadVoices();
+drawTrace('trace', [], []);
+drawTicks();
+</script>
+</body>
+</html>

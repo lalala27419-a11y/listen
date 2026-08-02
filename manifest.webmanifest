@@ -1,0 +1,36 @@
+{
+  "name": "噪声听写",
+  "short_name": "听写",
+  "id": "./",
+  "description": "噪声中的听写训练，自适应信噪比阶梯",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#DEDCD3",
+  "theme_color": "#DEDCD3",
+  "categories": [
+    "education"
+  ],
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
