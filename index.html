@@ -58,12 +58,15 @@ body{
 
 /* ---- 主区 ---- */
 .stage{flex:1;display:flex;flex-direction:column;justify-content:center;gap:12px;padding:16px 0}
-.verdict{min-height:52px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px}
+.verdict{min-height:52px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;padding:2px 0}
 .mark{font-family:var(--mono);font-size:26px;line-height:1}
 .mark.ok{color:var(--left)}
 .mark.no{color:var(--right)}
 .truth{font-family:var(--mono);font-size:19px;letter-spacing:.02em}
 .hint{font-size:11px;color:#6E6C63}
+.sent{font-size:14.5px;line-height:1.65;margin:9px 4px 0;text-align:center;color:var(--ink)}
+.sent b{font-weight:600;color:var(--left);border-bottom:2px solid var(--left);padding-bottom:1px}
+.gloss{font-size:12px;color:#6E6C63;margin-top:6px;text-align:center}
 
 button{font-family:inherit;font-size:16px;border:1.5px solid var(--ink);background:transparent;
   color:var(--ink);padding:15px;width:100%;cursor:pointer;border-radius:0}
@@ -198,6 +201,17 @@ select{width:100%;font-family:var(--mono);font-size:14px;padding:12px;border:1.5
     <input type="range" id="ref" min="2" max="40" step="1">
     <p class="note" style="margin-top:6px">只需调一次。往右拉直到最简单档位（+12dB）刚好还能轻松听清。</p>
 
+    <label>训练重点</label>
+    <div class="seg" id="seg-focus">
+      <button data-f="lex">词汇</button>
+      <button data-f="phon">音素</button>
+      <button data-f="morph">词尾</button>
+    </div>
+    <p class="note" style="margin-top:6px">决定干扰项从哪来，同一份词表可直接切换。<br>
+      <b>词汇</b>：干扰项取自同组，练音形对应。<br>
+      <b>音素</b>：从全库挑声音最像的词，练解码。<br>
+      <b>词尾</b>：自动生成单复数/三单形式，练高频辅音。仅对标了 n. / v. 的词生效。</p>
+
     <label>作答方式</label>
     <div class="seg" id="seg-resp">
       <button data-r="choice">四选一</button>
@@ -226,8 +240,15 @@ select{width:100%;font-family:var(--mono);font-size:14px;padding:12px;border:1.5
     <label>每轮题数 <span id="n-v" style="float:right;text-transform:none;letter-spacing:0"></span></label>
     <input type="range" id="n" min="10" max="40" step="5">
 
-    <label>发音</label>
-    <div class="seg" id="seg-voice"></div>
+    <label>口音</label>
+    <div class="seg" id="seg-accent"></div>
+    <p class="note" style="margin-top:6px" id="accent-note"></p>
+
+    <label>发音人</label>
+    <select id="voice"></select>
+    <div class="row" style="margin-top:8px">
+      <button id="btn-try">试听</button>
+    </div>
 
     <label>语速 <span id="rate-v" style="float:right;text-transform:none;letter-spacing:0"></span></label>
     <input type="range" id="rate" min="70" max="120" step="5">
@@ -304,6 +325,8 @@ const cfg = {
   mode:  DB.get('mode', 'word'),   // word | sent | mix
   resp:  DB.get('resp', 'choice'), // choice 四选一 | type 打字
   down:  DB.get('down', 3),        // 连对几次才加难: 2→71%正确率, 3→79%
+  accent: DB.get('accent', 'mix'), // GB | US | AU | mix
+  focus: DB.get('focus', 'lex'),   // lex 词汇③ | phon 音素① | morph 词尾形态
   group: DB.get('group', ''),      // '' = 全部分组
   fam:   DB.get('fam', 1),
   words: DB.get('words', DEFAULT_WORDS)
@@ -318,8 +341,23 @@ function thirdPerson(v) {
   if (/[^aeiou]y$/.test(v)) return v.slice(0, -1) + 'ies';
   return v + 's';
 }
+const IRREG_PL = {
+  child:'children', man:'men', woman:'women', foot:'feet', tooth:'teeth',
+  goose:'geese', mouse:'mice', louse:'lice', ox:'oxen', person:'people',
+  leaf:'leaves', wolf:'wolves', shelf:'shelves', half:'halves', calf:'calves',
+  self:'selves', thief:'thieves', loaf:'loaves', knife:'knives', life:'lives',
+  wife:'wives', datum:'data', medium:'media', criterion:'criteria',
+  phenomenon:'phenomena', analysis:'analyses', basis:'bases', crisis:'crises',
+  thesis:'theses', hypothesis:'hypotheses', axis:'axes', index:'indices',
+  appendix:'appendices', formula:'formulae', radius:'radii', stimulus:'stimuli',
+  fungus:'fungi', nucleus:'nuclei', bacterium:'bacteria', curriculum:'curricula',
+  sheep:'sheep', fish:'fish', deer:'deer', species:'species', series:'series',
+  aircraft:'aircraft', means:'means'
+};
 function pluralize(n) {
+  if (IRREG_PL[n]) return IRREG_PL[n];
   if (/(s|sh|ch|x|z)$/.test(n)) return n + 'es';
+  if (/[^aeiou]o$/.test(n)) return n + 'es';   // volcanoes, heroes（元音+o 则加 s: radios）
   if (/[^aeiou]y$/.test(n)) return n.slice(0, -1) + 'ies';
   if (/fe$/.test(n)) return n.slice(0, -2) + 'ves';
   return n + 's';
@@ -357,6 +395,45 @@ function fixArticle(sent, ans) {
   const need = /^[aeiou]/i.test(ans) ? 'an' : 'a';
   return sent.replace(/\b(a|an)(\s*)_{2,}/i, (full, art, sp) =>
     (art[0] === art[0].toUpperCase() ? need[0].toUpperCase() + need.slice(1) : need) + sp + m[0]);
+}
+
+/* 把拼写归一成粗略的音形骨架，用来找"听起来像"的词。
+   不是严格音标转写，但足够把 think/thing/sink 判为相近。 */
+function phoneKey(w) {
+  return w.toLowerCase().replace(/[^a-z]/g, '')
+    .replace(/ph/g, 'f').replace(/ck/g, 'k').replace(/qu/g, 'kw')
+    .replace(/wr/g, 'r').replace(/kn/g, 'n').replace(/mb$/g, 'm')
+    .replace(/tch/g, 'C').replace(/ch/g, 'C').replace(/sh/g, 'S')
+    .replace(/th/g, 'T').replace(/c(?=[eiy])/g, 's').replace(/c/g, 'k')
+    .replace(/[aeiou]+/g, 'a')          // 元音归一，只保留位置
+    .replace(/(.)\1+/g, '$1');          // 叠字母合并
+}
+function phoneSim(a, b) {
+  const ka = phoneKey(a), kb = phoneKey(b);
+  if (!ka || !kb) return 0;
+  const d = editDist(ka, kb);
+  let sc = 1 - d / Math.max(ka.length, kb.length);
+  if (ka[0] === kb[0]) sc += 0.15;                       // 词首相同
+  if (ka.slice(-1) === kb.slice(-1)) sc += 0.10;         // 词尾相同
+  if (Math.abs(ka.length - kb.length) <= 1) sc += 0.10;  // 长度接近
+  return sc;
+}
+function pastTense(v) {
+  if (/e$/.test(v)) return v + 'd';
+  if (/[^aeiou]y$/.test(v)) return v.slice(0, -1) + 'ied';
+  return v + 'ed';
+}
+/* 取一个词的屈折形式。只做 -s（复数/三单）——它规则性最高，
+   而且 /s/ /z/ 正是高频辅音，最容易被漏掉的那一类。
+   不生成过去式：不规则动词太多，造出 goed 会教错。 */
+function inflect(word, zh) {
+  const pm = (zh || '').match(/^\s*([a-z]+)\./);
+  const pos = pm ? pm[1] : '';
+  if (/\s/.test(word)) return null;
+  let f = null;
+  if (pos === 'n') f = pluralize(word);
+  if (pos === 'v') f = thirdPerson(word);
+  return (f && f !== word) ? f : null;   // sheep/sheep 这种无对比, 跳过
 }
 
 /* 解析词表：支持两种行格式
@@ -464,11 +541,39 @@ function loadVoices() {
 }
 speechSynthesis.onvoiceschanged = loadVoices;
 
-function pickVoice() {
+/* 雅思听力混用英/美/澳等口音，只练一种会留缺口 */
+const ACCENTS = [
+  { code: 'GB', label: '英音', re: /^en[-_](GB|UK)/i },
+  { code: 'US', label: '美音', re: /^en[-_]US/i },
+  { code: 'AU', label: '澳音', re: /^en[-_]AU/i }
+];
+
+function voicesFor(code) {
+  const a = ACCENTS.find(x => x.code === code);
+  return a ? voices.filter(v => a.re.test(v.lang)) : [];
+}
+function availAccents() {
+  return ACCENTS.filter(a => voicesFor(a.code).length > 0);
+}
+
+// 每题锁定一个发音人，这样「重听」和「原声重听」不会换人
+let trialVoice = null;
+
+function chooseVoice() {
   if (!voices.length) return null;
-  return voices.find(v => v.name === cfg.voice)
-      || voices.find(v => /GB|UK/i.test(v.lang))
-      || voices[0];
+  let code = cfg.accent;
+  if (code === 'mix') {
+    const av = availAccents();
+    if (!av.length) return voices[0];
+    code = av[Math.floor(Math.random() * av.length)].code;
+  }
+  const pool = voicesFor(code);
+  if (!pool.length) return voices[0];          // 该口音设备上没有, 退回任意英语音
+  return pool.find(v => v.name === cfg.voice) || pool[0];
+}
+
+function pickVoice() {
+  return trialVoice || chooseVoice();
 }
 
 function say(word, snr) {
@@ -563,9 +668,11 @@ function shuffle(a) {
 }
 
 let curMode = 'word';
+let allWords = [];
 
 function start() {
-  let all = parseBank(cfg.words);
+  allWords = parseBank(cfg.words);
+  let all = allWords;
   if (cfg.group) all = all.filter(e => e.g === cfg.group);
   const withSent = all.filter(e => e.s);
   if (cfg.mode === 'sent' && !withSent.length) {
@@ -584,16 +691,90 @@ function start() {
 
 const cur = () => queue[i % queue.length];
 
+let trialText = '', trialAns = '', trialOpts = null;
+
+function nearestWords(word, k, pool) {
+  return (pool || allWords)
+    .filter(x => x.w && x.w !== word && !/\s/.test(x.w))
+    .map(x => [x, phoneSim(word, x.w)])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, k).map(p => p[0]);
+}
+
+function setupTrial() {
+  trialVoice = chooseVoice();
+  const e = cur();
+  trialOpts = null;
+  if (curMode === 'sent') { trialText = e.s; trialAns = e.a; return; }
+
+  if (cfg.focus === 'morph') {
+    const f = inflect(e.w, e.zh);
+    if (f) {
+      // 随机念原形或屈折形, 四个选项 = 本词两形 + 一个音近词两形
+      trialAns = Math.random() < 0.5 ? f : e.w;
+      trialText = trialAns;
+      trialOpts = [e.w, f];
+      for (const n of nearestWords(e.w, 6)) {
+        const nf = inflect(n.w, n.zh);
+        if (nf) { trialOpts.push(n.w, nf); break; }
+      }
+      return;
+    }
+  }
+  // 孤立词一律念词头并按词头判分
+  trialText = e.w;
+  trialAns = e.w;
+}
+
+let nextTimer = null, advanced = false;
+function goNext() {
+  if (advanced) return;
+  advanced = true;
+  clearTimeout(nextTimer);
+  nextTimer = null;
+  i++; replays = 0;
+  next();
+}
+function holdHere() {          // 用户主动操作了, 撤掉自动推进, 由他自己点下一题
+  clearTimeout(nextTimer);
+  nextTimer = null;
+}
+
+// 无噪原声：对着文字听一遍干净发音, 是把音和形对上的最好时机
+async function playClean() {
+  if (busy) return;
+  holdHere();
+  busy = true;
+  const b = $('btn-replay');
+  const label = b.textContent;
+  b.textContent = '播放中';
+  b.disabled = true;
+  try {
+    await say(trialText, 40);   // 40dB ≈ 听不到噪声
+  } catch (err) {}
+  b.textContent = label;
+  b.disabled = false;
+  busy = false;
+}
+
 /* 干扰项：优先挑长度相近、首字母相同的词，比随机更接近真实混淆 */
 function distractors(truth, k) {
-  const pool = words.map(e => e.a).filter(a => typeof a === 'string' && a && a !== truth);
+  if (cfg.focus === 'phon') {
+    // 音素模式：从全库按语音相似度挑，不受分组限制
+    const out = nearestWords(truth, k + 2, allWords)
+      .map(e => e.w).filter(w => w !== truth);
+    if (out.length >= k) return out.slice(0, k);
+  }
+  const pool = words.map(e => e.w).filter(a => typeof a === 'string' && a && a !== truth);
   const score = a => (a[0] === truth[0] ? 0 : 2) + Math.abs(a.length - truth.length) * 0.4;
   return shuffle(pool).sort((x, y) => score(x) - score(y)).slice(0, k);
 }
 
 function renderChoices(truth) {
   if (typeof truth !== 'string' || !truth) throw new Error('题目数据缺失');
-  const opts = shuffle([truth, ...distractors(truth, 3)]);
+  const opts = shuffle(trialOpts
+    ? [...new Set(trialOpts)].slice(0, 4)
+    : [truth, ...distractors(truth, 3)]);
   $('choices').innerHTML = opts.map(o =>
     '<button data-o="' + esc(o) + '">' + esc(o) + '</button>').join('');
   $('choices').querySelectorAll('button').forEach(b => {
@@ -615,12 +796,23 @@ function trialMode() {
 async function next() {
   if (i >= cfg.n) return finish();
   curMode = trialMode();
-  $('lbl-mode').textContent = curMode === 'sent' ? '信噪比 · 句中词' : '信噪比 · 孤立词';
+  $('lbl-mode').textContent = '信噪比 · ' +
+    (curMode === 'sent' ? '句中词'
+      : cfg.focus === 'phon' ? '音素'
+      : cfg.focus === 'morph' ? '词尾' : '孤立词');
   $('snr').textContent = (snr >= 0 ? '+' : '') + snr;
   $('verdict').innerHTML = '<div class="hint">播放中…</div>';
   $('ans').value = '';
   $('choices').classList.remove('on');
   answered = false;
+  advanced = false;
+  setupTrial();
+  clearTimeout(nextTimer); nextTimer = null;
+  $('btn-replay').textContent = '重听';
+  $('btn-replay').onclick = () => { replays++; play(); };
+  $('btn-submit').textContent = '确认';
+  $('btn-submit').onclick = submit;
+  $('btn-submit').classList.remove('primary');
   drawTicks();
   await play();
   const choice = cfg.resp === 'choice';
@@ -633,7 +825,7 @@ async function next() {
   $('btn-replay').disabled = false;
   if (choice) {
     let okRender = false;
-    try { renderChoices(cur().a); okRender = $('choices').innerHTML.length > 0; }
+    try { renderChoices(trialAns); okRender = $('choices').innerHTML.length > 0; }
     catch (e) { okRender = false; }
     if (!okRender) {                       // 选项渲染失败就退回打字, 绝不留死界面
       $('choices').classList.remove('on');
@@ -658,8 +850,7 @@ async function play() {
   $('btn-play').disabled = true;
   $('btn-replay').disabled = true;
   try {
-    const e = cur();
-    await say(curMode === 'sent' ? e.s : e.w, snr);
+    await say(trialText, snr);
   } catch (err) {
     $('verdict').innerHTML = '<div class="hint">这条没能播出来：' +
       esc(String(err && err.message || err)) + '<br>点「重听」再试，或「跳过这题」</div>';
@@ -681,7 +872,7 @@ function submit() {
   answered = true;
   try { speechSynthesis.cancel(); } catch (err) {}
   const e = cur();
-  const truth = e.a;
+  const truth = trialAns;
   const norm = s => s.toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
   const nt = norm(typed), nr = norm(truth);
   const exact = nt === nr;
@@ -698,8 +889,10 @@ function submit() {
 
   // 句子只在答完后揭示——提前给出文字等于泄漏语境
   const reveal = (curMode === 'sent' && e.blank)
-    ? '<div class="hint" style="margin-top:5px;line-height:1.5">' +
-      esc(e.blank.replace(/_{2,}/, '【' + truth + '】')) + '</div>' : '';
+    ? '<div class="sent">' +
+      esc(e.blank).replace(/_{2,}/, '<b>' + esc(truth) + '</b>') + '</div>' +
+      (e.zh ? '<div class="gloss">' + esc(e.zh) + '</div>' : '')
+    : (e.zh ? '<div class="gloss">' + esc(e.zh) + '</div>' : '');
   $('verdict').innerHTML = (exact
     ? '<div class="mark ok">✓</div>'
     : spellOnly
@@ -720,10 +913,25 @@ function submit() {
 
   drawTrace('trace', hist, results);
   $('ans').disabled = true;
-  $('btn-replay').disabled = true;
-  $('btn-submit').disabled = true;
-  i++; replays = 0;
-  setTimeout(next, curMode === 'sent' ? 1400 : 650);
+  $('choices').classList.remove('on');
+
+  // 揭示阶段：按要读的字数给时间，句子比孤立词长得多
+  const shown = (curMode === 'sent' && e.blank) ? e.blank : truth;
+  const readMs = curMode === 'sent'
+    ? Math.min(12000, 2600 + shown.length * 60)   // 一句话读完约需这么久
+    : (exact ? 800 : 2000);                       // 答错的孤立词也要看清拼写
+
+  // 两个按钮交给用户控制节奏，随时可以提前走或留下来多看几眼
+  $('btn-replay').textContent = '原声重听';
+  $('btn-replay').disabled = false;
+  $('btn-replay').onclick = playClean;
+  $('btn-submit').style.display = '';
+  $('btn-submit').textContent = '下一题';
+  $('btn-submit').classList.add('primary');
+  $('btn-submit').disabled = false;
+  $('btn-submit').onclick = goNext;
+
+  nextTimer = setTimeout(goNext, readMs);
 }
 
 function finish() {
@@ -866,25 +1074,50 @@ function drawHist() {
 
 /* ---------------- 设置 ---------------- */
 function renderVoices() {
-  const pool = voices.slice(0, 4);
-  $('seg-voice').innerHTML = pool.length
-    ? pool.map(v => '<button data-v="' + esc(v.name) + '"' +
-        (v.name === cfg.voice ? ' class="on"' : '') + '>' +
-        esc(v.lang.replace('_', '-')) + '</button>').join('')
-    : '<button class="on">系统默认</button>';
-  $('seg-voice').querySelectorAll('button[data-v]').forEach(b => {
-    b.onclick = () => {
-      cfg.voice = b.dataset.v;
-      $('seg-voice').querySelectorAll('button').forEach(x => x.classList.remove('on'));
-      b.classList.add('on');
-      initAudio(); if (ctx.state === 'suspended') ctx.resume();
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance('library');
-      const v = voices.find(x => x.name === cfg.voice);
-      if (v) { u.voice = v; u.lang = v.lang; }
-      u.rate = cfg.rate; speechSynthesis.speak(u);
-    };
+  const av = availAccents();
+
+  if (!voices.length) {
+    $('seg-accent').innerHTML = '<button class="on">系统默认</button>';
+    $('voice').innerHTML = '<option>系统默认</option>';
+    $('accent-note').textContent = '还没读到语音列表，稍等片刻或重开页面。';
+    return;
+  }
+
+  // 只列设备上真有的口音
+  $('seg-accent').innerHTML =
+    av.map(a => '<button data-a="' + a.code + '">' + a.label + '</button>').join('') +
+    (av.length > 1 ? '<button data-a="mix">混合</button>' : '');
+  $('seg-accent').querySelectorAll('button[data-a]').forEach(b => {
+    b.classList.toggle('on', b.dataset.a === cfg.accent);
+    b.onclick = () => { cfg.accent = b.dataset.a; cfg.voice = ''; renderVoices(); };
   });
+
+  // 当前口音下的发音人
+  const pool = cfg.accent === 'mix' ? voices : voicesFor(cfg.accent);
+  const list = pool.length ? pool : voices;
+  $('voice').innerHTML = list.map(v =>
+    '<option value="' + esc(v.name) + '"' + (v.name === cfg.voice ? ' selected' : '') +
+    '>' + esc(v.name) + '（' + esc(v.lang.replace('_', '-')) + '）</option>').join('');
+
+  const missing = ACCENTS.filter(a => !voicesFor(a.code).length).map(a => a.label);
+  $('accent-note').innerHTML = (cfg.accent === 'mix'
+    ? '每题随机换口音，最接近雅思考试的真实情况。'
+    : '固定一种口音。') +
+    (missing.length ? '<br>这台设备没装：' + missing.join('、') +
+      '。系统设置里加装对应语音包后会自动出现。' : '');
+}
+
+function tryVoice() {
+  initAudio();
+  if (ctx.state === 'suspended') ctx.resume();
+  try { speechSynthesis.cancel(); } catch (e) {}
+  const u = new SpeechSynthesisUtterance('The library opens at half past nine.');
+  const prev = trialVoice; trialVoice = null;
+  const v = chooseVoice();
+  trialVoice = prev;
+  if (v) { u.voice = v; u.lang = v.lang; }
+  u.rate = cfg.rate;
+  setTimeout(() => speechSynthesis.speak(u), 120);
 }
 
 function renderSeg(id, key, attr) {
@@ -920,6 +1153,7 @@ function renderGroups() {
 
 function openSet() {
   renderMode();
+  renderSeg('seg-focus', 'focus', 'f');
   renderSeg('seg-resp', 'resp', 'r');
   renderSeg('seg-down', 'down', 'd');
   $('ref').value = Math.round(cfg.ref * 100);
@@ -989,6 +1223,8 @@ $('n').oninput   = e => { cfg.n = +e.target.value; $('n-v').textContent = e.targ
 $('rate').oninput= e => { cfg.rate = +e.target.value / 100; $('rate-v').textContent = cfg.rate.toFixed(2) + '×'; };
 
 $('grp').onchange = e => { cfg.group = e.target.value; renderGroups(); };
+$('voice').onchange = e => { cfg.voice = e.target.value; tryVoice(); };
+$('btn-try').onclick = tryVoice;
 $('words').oninput = () => { renderGroups(); };
 
 let appendMode = false;
@@ -1026,6 +1262,8 @@ $('save').onclick = () => {
   DB.set('resp', cfg.resp);
   DB.set('down', cfg.down);
   DB.set('group', cfg.group);
+  DB.set('focus', cfg.focus);
+  DB.set('accent', cfg.accent);
   DB.set('words', cfg.words);
   $('btn-play').textContent = '▶ 开始';
   show('p-drill');
@@ -1069,9 +1307,11 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 }
 
 // 装到主屏后横屏会让阈值读数被键盘挤掉，锁竖屏（支持的浏览器才生效）
-if (screen.orientation && screen.orientation.lock) {
-  screen.orientation.lock('portrait').catch(() => {});
-}
+try {
+  if (typeof screen !== 'undefined' && screen.orientation && screen.orientation.lock) {
+    screen.orientation.lock('portrait').catch(() => {});
+  }
+} catch (e) {}
 
 loadVoices();
 drawTrace('trace', [], []);

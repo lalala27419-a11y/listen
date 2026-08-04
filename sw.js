@@ -1,6 +1,6 @@
 /* 噪声听写 · Service Worker
    改动 index.html 后把 VERSION 加一，用户下次打开会自动更新。 */
-const VERSION = 'v1';
+const VERSION = 'v4';
 const CACHE = 'listen-' + VERSION;
 
 const ASSETS = [
